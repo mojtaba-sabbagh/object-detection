@@ -1,0 +1,5 @@
+django==5.0.6
+djangorestframework==3.15.2
+ultralytics==8.3.0
+pillow==10.4.0
+corsheaders==4.4.0

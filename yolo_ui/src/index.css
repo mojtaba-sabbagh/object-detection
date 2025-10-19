@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Yekan';
+  src: url('/src/assets/fonts/Yekan.woff2') format('woff2'),
+       url('/src/assets/fonts/Yekan.woff') format('woff');
+  font-weight: 100 900; /* variable range or set normal/bold if static */
+  font-style: normal;
+  font-display: swap;
+}
