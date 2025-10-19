@@ -1,6 +1,6 @@
-# detection/detector.py
 from ultralytics import YOLO
 from django.conf import settings
+from .models import YoloModel
 import time, threading, logging, os, io
 
 try:
@@ -8,39 +8,50 @@ try:
 except Exception:
     torch = None
 
-from PIL import Image  # robust open + format validation
+from PIL import Image
 
-CLASS_NAMES = {0: '0', 1: '1', 2: '2'}
-
+CLASS_NAMES = {0: "0", 1: "1", 2: "2"}
 log = logging.getLogger(__name__)
+
 _model = None
 _model_lock = threading.Lock()
+_active_model_id = None  # track which DB model is loaded
+
+def _current_active():
+    # DB first; fallback to settings.YOLO_MODEL_PATH if no rows exist
+    m = YoloModel.objects.filter(is_active=True).first()
+    if m:
+        return m
+    # Optional fallback if admin hasn't added any rows yet
+    path = getattr(settings, "YOLO_MODEL_PATH", None)
+    if path:
+        pseudo = type("M", (), {})()
+        pseudo.id = -1
+        pseudo.name = os.path.basename(path)
+        pseudo.weights_path = path
+        return pseudo
+    return None
 
 def _load_model():
-    """Load once, raise a clear error if weights missing/incompatible."""
-    global _model
+    global _model, _active_model_id
     with _model_lock:
-        if _model is None:
-            path = str(getattr(settings, "YOLO_MODEL_PATH", "weights/best.pt"))
-            if not os.path.exists(path):
-                raise FileNotFoundError(f"YOLO weights not found at '{path}'. "
-                                        f"Set YOLO_MODEL_PATH or place weights/best.pt")
-            try:
-                _model = YOLO(path)
-            except Exception as e:
-                # Common: checkpoint built with newer ultralytics (e.g., C3k2)
-                raise RuntimeError(
-                    f"Failed to load model at '{path}'. "
-                    f"Possible Ultralytics/torch mismatch or unsupported layer. Cause: {e}"
-                )
+        active = _current_active()
+        if not active:
+            raise RuntimeError("No active YOLO model found. Add one in admin and mark it active.")
+        # Reload if first time or active changed
+        if (_model is None) or (_active_model_id != active.id):
+            log.info("Loading YOLO model from %s (id=%s)", active.weights_path, getattr(active, "id", None))
+            _model = YOLO(active.weights_path)
+            _active_model_id = active.id
     return _model
 
 def _resolve_device(requested):
-    req = (str(requested).lower() if requested not in (None, "", "auto") 
+    req = (str(requested).lower() if requested not in (None, "", "auto")
            else str(getattr(settings, "DEFAULT_YOLO_DEVICE", "auto")).lower())
 
-    # ONNX -> run on CPU by default (simple and portable)
-    if str(getattr(settings, "YOLO_MODEL_PATH", "")).lower().endswith(".onnx"):
+    # ONNX -> stick to CPU (portable)
+    active = _current_active()
+    if active and str(active.weights_path).lower().endswith(".onnx"):
         return "cpu"
 
     if torch is None:
@@ -55,8 +66,7 @@ def _resolve_device(requested):
         if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             return "mps"
         return "cpu"
-    # numeric or multi-GPU like "0,1"
-    if all(c.isdigit() or c=="," for c in req):
+    if all(c.isdigit() or c == "," for c in req):
         if not torch.cuda.is_available():
             return "cpu"
         first = req.split(",")[0]
@@ -68,14 +78,13 @@ def _resolve_device(requested):
     return "cpu"
 
 def _read_image_pil(file_obj):
-    """Read uploaded file into PIL to fail fast on invalid/corrupt images."""
     try:
         data = file_obj.read()
         if hasattr(file_obj, "seek"):
-            file_obj.seek(0)  # so Ultralytics can read again if needed
+            file_obj.seek(0)
         im = Image.open(io.BytesIO(data))
-        im.verify()          # check corruption
-        im = Image.open(io.BytesIO(data)).convert("RGB")  # reopen usable handle
+        im.verify()
+        im = Image.open(io.BytesIO(data)).convert("RGB")
         return im
     except Exception as e:
         raise ValueError(f"Uploaded file is not a valid image: {e}")
@@ -86,17 +95,7 @@ def run_inference(file_obj, conf=0.25, imgsz=640, device=None):
     pil_img = _read_image_pil(file_obj)
 
     t0 = time.time()
-    try:
-        results = model.predict(
-            source=pil_img,       # pass validated image
-            conf=conf,
-            imgsz=imgsz,
-            device=device_str,    # safe on cpu/gpu/mps
-            verbose=False,
-        )
-    except Exception as e:
-        # Surface low-level device/ops problems clearly
-        raise RuntimeError(f"Ultralytics predict() failed on device='{device_str}': {e}")
+    results = model.predict(source=pil_img, conf=conf, imgsz=imgsz, device=device_str, verbose=False)
     t1 = time.time()
 
     r = results[0]
@@ -111,12 +110,15 @@ def run_inference(file_obj, conf=0.25, imgsz=640, device=None):
             conf_score = float(boxes.conf[i].item())
             x1, y1, x2, y2 = [float(v) for v in boxes.xyxy[i].tolist()]
             detections.append({
-                "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2,
-                         "width": x2 - x1, "height": y2 - y1},
-                "class_id": cls_idx, "class_name": cls_name,
+                "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": x2 - x1, "height": y2 - y1},
+                "class_name": cls_name,
                 "confidence": conf_score,
             })
             counts[cls_name] = counts.get(cls_name, 0) + 1
+
+    # echo active model name in response
+    active = _current_active()
+    active_name = getattr(active, "name", None)
 
     return {
         "image": {"width": int(r.orig_shape[1]), "height": int(r.orig_shape[0])},
@@ -125,5 +127,5 @@ def run_inference(file_obj, conf=0.25, imgsz=640, device=None):
         "counts": counts,
         "total": sum(counts.values()),
         "device": device_str,
-        "model_path": str(getattr(settings, "YOLO_MODEL_PATH", "")),
+        "active_model": active_name,
     }

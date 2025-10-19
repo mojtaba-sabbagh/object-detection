@@ -7,8 +7,46 @@ from rest_framework import status
 from .detector import run_inference
 from .utils import merge_counts
 import io, zipfile, time
+from .models import YoloModel
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
+
+class CurrentModelView(APIView):
+    def get(self, request):
+        m = YoloModel.objects.filter(is_active=True).first()
+        if not m:
+            # Fallback: if settings.YOLO_MODEL_PATH is set, return a minimal object
+            from django.conf import settings
+            p = getattr(settings, "YOLO_MODEL_PATH", None)
+            if not p:
+                return Response({"active": None}, status=status.HTTP_200_OK)
+            return Response({
+                "active": {
+                    "id": -1,
+                    "name": p.split("/")[-1],
+                    "date_built": None,
+                    "base_model": None,
+                    "num_params": None,
+                    "map": None,
+                    "map_5095": None,
+                    "size": None,
+                    "weights_path": p,
+                }
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            "active": {
+                "id": m.id,
+                "name": m.name,
+                "date_built": m.date_built,
+                "base_model": m.base_model,
+                "num_params": m.num_params,
+                "map": m.map,
+                "map_5095": m.map_5095,
+                "size": m.size,
+                "weights_path": m.weights_path,
+            }
+        }, status=status.HTTP_200_OK)
 
 class BatchDetectView(APIView):
     parser_classes = (MultiPartParser, FormParser)
