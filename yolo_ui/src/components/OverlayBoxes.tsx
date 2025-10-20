@@ -5,23 +5,30 @@ interface Props {
   imgEl: HTMLImageElement | null;
   original?: { width: number; height: number } | undefined;
   detections: Detection[];
+  readyTick?: number; // bumps when the <img> fires onLoad
 }
 
-export default function OverlayBoxes({ imgEl, original, detections }: Props): JSX.Element | null {
+export default function OverlayBoxes({ imgEl, original, detections, readyTick = 0 }: Props): JSX.Element | null {
   const [dims, setDims] = useState({ w: 0, h: 0 });
 
-  useEffect(() => {
+  const updateDims = () => {
     if (!imgEl) return;
-    const update = () => setDims({ w: imgEl.clientWidth, h: imgEl.clientHeight });
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(imgEl);
-    window.addEventListener('resize', update);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', update);
-    };
-  }, [imgEl]);
+    const w = imgEl.clientWidth || imgEl.naturalWidth || 0;
+    const h = imgEl.clientHeight || imgEl.naturalHeight || 0;
+    setDims({ w, h });
+  };
+
+  useEffect(() => {
+    updateDims();
+    window.addEventListener('resize', updateDims);
+    return () => window.removeEventListener('resize', updateDims);
+    // Re-run when imgEl changes or image finishes loading or detections update
+  }, [imgEl, readyTick]);
+
+  useEffect(() => {
+    // When detections change, ensure overlay dimensions are still correct
+    updateDims();
+  }, [detections]);
 
   const { scaleX, scaleY } = useMemo(() => {
     if (!original?.width || !original?.height || !dims.w || !dims.h) {
@@ -43,7 +50,7 @@ export default function OverlayBoxes({ imgEl, original, detections }: Props): JS
 
   return (
     <div
-      className="absolute left-0 top-0"
+      className="absolute left-0 top-0 z-10"  // ← ensure overlay is above the <img>
       style={{ width: dims.w, height: dims.h }}
     >
       {detections.map((d, i) => {
