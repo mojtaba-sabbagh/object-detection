@@ -15,7 +15,6 @@ class CurrentModelView(APIView):
     def get(self, request):
         m = YoloModel.objects.filter(is_active=True).first()
         if not m:
-            # Fallback: if settings.YOLO_MODEL_PATH is set, return a minimal object
             from django.conf import settings
             p = getattr(settings, "YOLO_MODEL_PATH", None)
             if not p:
@@ -48,6 +47,7 @@ class CurrentModelView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
+
 class BatchDetectView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
@@ -55,6 +55,13 @@ class BatchDetectView(APIView):
         conf = float(request.query_params.get('conf', 0.25))
         imgsz = int(request.query_params.get('imgsz', 640))
         device = request.query_params.get('device', getattr(settings, 'DEFAULT_YOLO_DEVICE', 'auto'))
+        annotate = str(request.query_params.get('annotate', '0')).lower() in ('1','true','yes')
+
+        # NEW: tiling knobs
+        tile = request.query_params.get('tile', 'auto')
+        tile_size = int(request.query_params.get('tile_size', 640))
+        overlap = float(request.query_params.get('overlap', 0.20))
+        nms_iou = float(request.query_params.get('nms_iou', 0.50))
 
         items = []
         collection_counts = {}
@@ -76,8 +83,7 @@ class BatchDetectView(APIView):
                         if not any(name_lower.endswith(ext) for ext in IMAGE_EXTS):
                             continue
                         with z.open(info) as f:
-                            # wrap as bytes for detector
-                            data = io.BytesIO(f.read())
+                            data = io.BytesIO(f.read())  # wrap bytes for detector
                             data.name = info.filename
                             files.append(data)
             except Exception as e:
@@ -99,7 +105,10 @@ class BatchDetectView(APIView):
         for f in files:
             name = getattr(f, 'name', 'image')
             try:
-                res = run_inference(f, conf=conf, imgsz=imgsz, device=device)
+                res = run_inference(
+                    f, conf=conf, imgsz=imgsz, device=device, annotate=annotate,
+                    tile=tile, tile_size=tile_size, overlap=overlap, nms_iou=nms_iou
+                )
                 merge_counts(collection_counts, res.get('counts', {}))
                 total_objects += int(res.get('total', 0))
                 items.append({
@@ -109,12 +118,11 @@ class BatchDetectView(APIView):
                     "counts": res.get("counts"),
                     "total": res.get("total"),
                     "detections": res.get("detections"),
+                    "image_b64": res.get("image_b64"),
                 })
             except Exception as e:
-                items.append({
-                    "name": name,
-                    "error": str(e),
-                })
+                items.append({"name": name, "error": str(e)})
+
 
         t1 = time.time()
         return Response({
@@ -127,6 +135,7 @@ class BatchDetectView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
+
 class DetectView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
@@ -138,9 +147,20 @@ class DetectView(APIView):
         conf = float(request.query_params.get('conf', 0.25))
         imgsz = int(request.query_params.get('imgsz', 640))
         device = request.query_params.get('device', getattr(settings, 'DEFAULT_YOLO_DEVICE', 'auto'))
+        annotate = str(request.query_params.get('annotate', '0')).lower() in ('1','true','yes')
+
+        # NEW: tiling knobs
+        tile = request.query_params.get('tile', 'auto')
+        tile_size = int(request.query_params.get('tile_size', 640))
+        overlap = float(request.query_params.get('overlap', 0.20))
+        nms_iou = float(request.query_params.get('nms_iou', 0.50))
 
         try:
-            data = run_inference(request.FILES['image'], conf=conf, imgsz=imgsz, device=device)
+            data = run_inference(
+                request.FILES['image'],
+                conf=conf, imgsz=imgsz, device=device, annotate=annotate,
+                tile=tile, tile_size=tile_size, overlap=overlap, nms_iou=nms_iou
+            )
             return Response(data, status=status.HTTP_200_OK)
         except Exception as e:
             payload = {"error": "Model inference failed"}
@@ -148,7 +168,7 @@ class DetectView(APIView):
                 payload["detail"] = str(e)
             return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
 class HealthView(APIView):
     def get(self, request):
         return Response({'status': 'ok'})
-
