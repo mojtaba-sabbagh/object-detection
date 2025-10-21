@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -72,6 +74,17 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS (dev only - tighten for prod)
 CORS_ALLOW_ALL_ORIGINS = True
 
+# Force CPU for inference
+DEFAULT_YOLO_DEVICE = os.getenv("DEFAULT_YOLO_DEVICE", "cpu")
+
+# CORS (if frontend served separately)
+INSTALLED_APPS += ["corsheaders"]
+MIDDLEWARE = ["corsheaders.middleware.CorsMiddleware", *MIDDLEWARE]
+CORS_ALLOW_ALL_ORIGINS = True  # or lock down to your frontend origin
+
+# Static (if you’ll serve the built React through Django later)
+STATIC_URL = "static/"
+STATIC_ROOT = Path(BASE_DIR) / "staticfiles"
+
 # ...
 YOLO_MODEL_PATH = os.getenv('YOLO_MODEL_PATH', str(BASE_DIR / 'weights' / 'best.pt'))
-DEFAULT_YOLO_DEVICE = os.getenv('YOLO_DEVICE', 'auto')  # 'auto' | 'cpu' | '0' | 'mps' ...
