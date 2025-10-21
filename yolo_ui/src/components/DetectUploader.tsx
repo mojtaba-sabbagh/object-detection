@@ -151,7 +151,7 @@ export default function DetectUploader(): JSX.Element {
                   </tr>
                 </thead>
                 <tbody>
-                  {countsRows.map(([cls, count]) => (
+                  {countsRows.map(([cls, count]: [string, number]) => (
                     <tr key={String(cls)} className="border-t">
                       <td className="p-2 font-mono">{String(cls)}</td>
                       <td className="p-2">{String(count)}</td>

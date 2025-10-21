@@ -166,8 +166,11 @@ export default function UnifiedDetector(): JSX.Element {
     }
     setPreviews(map);
 
-    if (f && f.length === 1 && isImageFile(f[0])) {
-      setPreview(URL.createObjectURL(f[0]));
+    if (f && f.length === 1) {
+      const first = f.item(0);
+      if (first && isImageFile(first)) {
+        setPreview(URL.createObjectURL(first));
+      }
     }
   }
 
@@ -185,10 +188,16 @@ export default function UnifiedDetector(): JSX.Element {
     const allImages = Array.from(files).every(isImageFile);
     setLoading(true);
     try {
-      if (files.length === 1 && isImageFile(files[0]) && !hasZip) {
+      if (files.length === 1 && !hasZip) {
         // SINGLE
+        const first = files.item(0);
+        if (!first || !isImageFile(first)) {
+          setError('Please select a valid image.');
+          setLoading(false);
+          return;
+        }
         const form = new FormData();
-        form.append('image', files[0]);
+        form.append('image', first, first.name);        
         const { data } = await axios.post<ApiResult>(
           `${API_BASE_URL}/api/detect/?conf=0.25&imgsz=640&annotate=1`,
           form, { headers: { 'Content-Type': 'multipart/form-data' } }
@@ -197,8 +206,14 @@ export default function UnifiedDetector(): JSX.Element {
         setBatchResult(null);
       } else if (hasZip && files.length === 1) {
         // BATCH via ZIP
+        const first = files.item(0);
+        if (!first) {
+          setError('ZIP file missing.');
+          setLoading(false);
+          return;
+        }
         const form = new FormData();
-        form.append('zip', files[0]);
+        form.append('zip', first, first.name);
         const { data } = await axios.post<BatchResponse>(
           `${API_BASE_URL}/api/detect/batch/?conf=0.25&imgsz=640&annotate=1`,
           form, { headers: { 'Content-Type': 'multipart/form-data' } }
@@ -323,7 +338,7 @@ export default function UnifiedDetector(): JSX.Element {
               <div className="relative inline-block">
                 <img
                   ref={imgRef}
-                  src={singleResult.image_b64 ? `data:image/jpeg;base64,${singleResult.image_b64}` : (preview || '')}
+                  src={singleResult.image_b64 ? `data:image/jpeg;base64,${singleResult.image_b64}` : (preview ?? '')}
                   alt="annotated"
                   className="block max-w-full object-contain rounded-lg border"
                   style={{ maxHeight: '70vh' }}
@@ -440,7 +455,7 @@ export default function UnifiedDetector(): JSX.Element {
             <div className="space-y-4">
                 {pagedItems.map((it, idx) => {
                 const before = previews.get(it.name) || null;
-                const after  = it.image_b64 ? `data:image/jpeg;base64,${it.image_b64}` : null;
+                const after  = it.image_b64 ? `data:image/jpeg;base64,${it.image_b64}` : (before ?? '');
 
                 // NEW: global index across the whole batch (not just the page)
                 const globalIndex = (page - 1) * pageSize + idx + 1;
