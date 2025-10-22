@@ -88,6 +88,70 @@ function AfterWithOverlay({
   );
 }
 
+// === Download helpers ===
+const CLASS_HEX: Record<string, string> = {
+  '0': '#EAB308', // yellow-600
+  '1': '#EA580C', // orange-600
+  '2': '#000000', // black
+};
+
+function downloadBase64Jpeg(base64: string, filename = 'annotated.jpg') {
+  const a = document.createElement('a');
+  a.href = `data:image/jpeg;base64,${base64}`;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function drawClientAnnotatedAndDownload(
+  src: string,
+  detections: Detection[] = [],
+  original: { width: number; height: number } | undefined,
+  filename = 'annotated.jpg'
+) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const W = img.width, H = img.height;
+    const scaleX = (original?.width ? W / original.width : 1);
+    const scaleY = (original?.height ? H / original.height : 1);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // draw original
+    ctx.drawImage(img, 0, 0);
+
+    // draw boxes (no labels)
+    ctx.lineWidth = 2;
+    detections.forEach(d => {
+      const { x1, y1, x2, y2 } = d.bbox;
+      const w = (x2 - x1) * scaleX;
+      const h = (y2 - y1) * scaleY;
+      ctx.strokeStyle = CLASS_HEX[d.class_name] ?? '#10B981'; // emerald fallback
+      ctx.strokeRect(x1 * scaleX, y1 * scaleY, w, h);
+    });
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, 'image/jpeg', 0.92);
+  };
+  img.src = src;
+}
+
+
 export default function UnifiedDetector(): JSX.Element {
   // state
   const [files, setFiles] = useState<FileList | null>(null);
@@ -317,7 +381,7 @@ export default function UnifiedDetector(): JSX.Element {
       {singleResult && (
         <section className="space-y-4">
           <h3 className="text-lg font-semibold">Result</h3>
-
+          {/* Side-by-side images */}
           <div className="grid gap-4 md:grid-cols-2">
             {/* Left: Original (Before) */}
             <div>
@@ -334,15 +398,41 @@ export default function UnifiedDetector(): JSX.Element {
 
             {/* Right: Annotated (After) with tooltips; hide borders if server drew them */}
             <div>
-              <div className="text-xs text-slate-500 mb-1">Annotated</div>
+              {/* Download button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fname = (files?.length === 1 && files.item(0)?.name)
+                      ? files.item(0)!.name.replace(/\.[^.]+$/, '') + '_annotated.jpg'
+                      : 'annotated.jpg';
+                    if (singleResult.image_b64) {
+                      downloadBase64Jpeg(singleResult.image_b64, fname);
+                    } else {
+                      const src = (preview ?? '');
+                      drawClientAnnotatedAndDownload(
+                        src,
+                        singleResult.detections ?? [],
+                        singleResult.image,
+                        fname
+                      );
+                    }
+                  }}
+                  className="text-xs text-slate-500 inline-flex items-center hover:text-slate-800"
+                  title="Download annotated image"
+                >
+                  ⬇️ Download annotated
+                </button>
+            <div className="w-full flex justify-start">
               <div className="relative inline-block">
                 <img
                   ref={imgRef}
-                  src={singleResult.image_b64 ? `data:image/jpeg;base64,${singleResult.image_b64}` : (preview ?? '')}
+                  src={singleResult.image_b64
+                    ? `data:image/jpeg;base64,${singleResult.image_b64}`
+                    : (preview ?? '')}
                   alt="annotated"
                   className="block max-w-full object-contain rounded-lg border"
                   style={{ maxHeight: '70vh' }}
-                  onLoad={() => setImgReady((n) => n + 1)}
+                  onLoad={() => setImgReady(n => n + 1)}
                 />
                 <OverlayBoxes
                   imgEl={imgRef.current}
@@ -354,20 +444,38 @@ export default function UnifiedDetector(): JSX.Element {
                 />
               </div>
             </div>
+          </div> 
           </div>
 
-          {/* Compact single-image stats */}
+          {/* Compact single-image stats (now OUTSIDE the grid) */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="card p-2.5"><div className="text-[12px] text-slate-500">Width</div><div className="font-mono text-sm">{singleResult.image?.width ?? '—'}</div></div>
-            <div className="card p-2.5"><div className="text-[12px] text-slate-500">Height</div><div className="font-mono text-sm">{singleResult.image?.height ?? '—'}</div></div>
-            <div className="card p-2.5"><div className="text-[12px] text-slate-500">Time</div><div className="font-mono text-sm whitespace-nowrap">{singleResult.inference_ms} ms</div></div>
-            <div className="card p-2.5"><div className="text-[12px] text-slate-500">Total</div><div className="font-mono text-sm">{singleResult.total}</div></div>
+            <div className="card p-2.5">
+              <div className="text-[12px] text-slate-500">Width</div>
+              <div className="font-mono text-sm">{singleResult.image?.width ?? '—'}</div>
+            </div>
+            <div className="card p-2.5">
+              <div className="text-[12px] text-slate-500">Height</div>
+              <div className="font-mono text-sm">{singleResult.image?.height ?? '—'}</div>
+            </div>
+            <div className="card p-2.5">
+              <div className="text-[12px] text-slate-500">Time</div>
+              <div className="font-mono text-sm whitespace-nowrap">{singleResult.inference_ms} ms</div>
+            </div>
+            <div className="card p-2.5">
+              <div className="text-[12px] text-slate-500">Total</div>
+              <div className="font-mono text-sm">{singleResult.total}</div>
+            </div>
           </div>
 
           <div>
             <h4 className="font-medium mb-2">Per-class</h4>
             <table className="w-full border rounded-xl text-xs leading-tight">
-              <thead><tr className="bg-slate-50 text-left"><th className="px-2 py-1">Class</th><th className="px-2 py-1">Count</th></tr></thead>
+              <thead>
+                <tr className="bg-slate-50 text-left">
+                  <th className="px-2 py-1">Class</th>
+                  <th className="px-2 py-1">Count</th>
+                </tr>
+              </thead>
               <tbody>
                 {withAllClasses(singleResult.counts).map(([k, v]) => (
                   <tr key={k} className="border-t">
@@ -385,8 +493,8 @@ export default function UnifiedDetector(): JSX.Element {
         </section>
       )}
 
-        {/* BATCH RESULT with PAGINATION + STATS + side-by-side image rows */}
-        {batchResult && (
+
+      {batchResult && (
         <section className="space-y-6">
             <h3 className="text-lg font-semibold">Batch results</h3>
 
@@ -497,18 +605,39 @@ export default function UnifiedDetector(): JSX.Element {
                         </div>
 
                         {/* Right: Annotated with tooltips */}
-                        <div>
-                            <div className="text-xs text-slate-500 mb-1">Annotated</div>
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const fname = it.name.replace(/\.[^.]+$/, '') + '_annotated.jpg';
+                                  if (it.image_b64) {
+                                    downloadBase64Jpeg(it.image_b64, fname);
+                                  } else {
+                                    // If server didn't send b64, compose using the 'after' src you've built
+                                    const afterSrc = it.image_b64
+                                      ? `data:image/jpeg;base64,${it.image_b64}`
+                                      : (previews.get(it.name) ?? '');
+                                    drawClientAnnotatedAndDownload(afterSrc, it.detections ?? [], it.image, fname);
+                                  }
+                                }}
+                                className="text-slate-500 inline-flex mb-1 items-center px-2.5 py-1 text-xs hover:text-slate-800"
+                                title="Download annotated image"
+                              >
+                                ⬇️ Download Annotated Image
+                              </button>
+                            </div>
+
                             <div className="w-full flex justify-start">
-                            <AfterWithOverlay
+                              <AfterWithOverlay
                                 src={after}
                                 detections={it.detections}
                                 original={it.image}
                                 showBorders={!it.image_b64}
                                 maxHeight="40vh"
-                            />
+                              />
                             </div>
-                        </div>
+                          </div>
                         </div>
 
                         {/* Per-image per-class table */}
