@@ -8,6 +8,8 @@ from .detector import run_inference
 from .utils import merge_counts
 import io, zipfile, time
 from .models import YoloModel
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
@@ -47,7 +49,7 @@ class CurrentModelView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
-
+@method_decorator(csrf_exempt, name='dispatch')
 class BatchDetectView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
@@ -135,7 +137,7 @@ class BatchDetectView(APIView):
             }
         }, status=status.HTTP_200_OK)
 
-
+@method_decorator(csrf_exempt, name='dispatch')
 class DetectView(APIView):
     parser_classes = (MultiPartParser, FormParser)
 
