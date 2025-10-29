@@ -13,6 +13,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
+@method_decorator(csrf_exempt, name='dispatch')
 class CurrentModelView(APIView):
     def get(self, request):
         m = YoloModel.objects.filter(is_active=True).first()
