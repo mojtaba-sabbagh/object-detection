@@ -18,10 +18,9 @@ REM === Change to backend dir ===
 cd /d C:\Users\pc\object-detection\backend
 
 REM === Activate conda and start uvicorn ===
-echo Activating conda environment... >> C:\Users\pc\object-detection\backend-service.log 2>&1
 call "C:\ProgramData\anaconda3\condabin\conda.bat" activate yolo_cpu
 
-echo Starting Uvicorn server... >> C:\Users\pc\object-detection\backend-service.log 2>&1
-uvicorn yolo_api.asgi:application --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 120 >> C:\Users\pc\object-detection\backend-service.log 2>&1
+echo Starting Uvicorn server...
+uvicorn yolo_api.asgi:application --host 0.0.0.0 --port 8000 --workers 4 --timeout-keep-alive 120
 
-echo Uvicorn process ended >> C:\Users\pc\object-detection\backend-service.log 2>&1
+echo Uvicorn process ended
