@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-echo Starting YOLO Backend Service... >> C:\Users\pc\object-detection\backend-service.log 2>&1
+echo Starting YOLO Backend Service...
 
 REM Set Python paths for service environment
 set "PATH="C:\Users\pc\.conda\envs\yolo_cpu;C:\Users\pc\.conda\envs\yolo_cpu\Scripts;C:\Users\pc\.conda\envs\yolo_cpu\Library\bin;%PATH%"
