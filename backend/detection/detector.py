@@ -67,14 +67,20 @@ def _resolve_device(device: str | None) -> str:
             # Prefer MPS on Apple if available
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 return "mps"
+            log.info(
+                "No GPU detected (cuda.is_available=%s, mps available=%s); falling back to CPU.",
+                torch.cuda.is_available(),
+                hasattr(torch.backends, "mps") and torch.backends.mps.is_available(),
+            )
             return "cpu"
         # For explicit strings like "0" or "0,1"
         if dev == "0" or dev.replace(",", "").isdigit():
             if torch.cuda.is_available():
                 return dev
+            log.warning("Requested CUDA device %r but CUDA is not available; using CPU.", dev)
             return "cpu"
     except Exception:
-        pass
+        log.warning("torch import/device check failed; defaulting to CPU.", exc_info=True)
     return "cpu"
 
 # ------------------ geometry & NMS ------------------
@@ -188,6 +194,7 @@ def run_inference(
     # Load model & device
     model = _load_model()
     dev = _resolve_device(device)
+    log.info("run_inference: requested device=%r resolved device=%r", device, dev)
 
     # Read image
     pil = _pil_from_file(file_obj)

@@ -32,6 +32,8 @@ venv.bak/
 .idea/
 *.swp
 *.swo
+*.exe
+*.bat
 
 # OS
 .DS_Store

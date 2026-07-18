@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'change-me-in-prod'
 DEBUG = False
 ALLOWED_HOSTS = [
-    "192.168.144.21",
+    "192.168.144.55",
     "localhost",
     "127.0.0.1", 
     "0.0.0.0",
@@ -79,8 +79,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS (dev only - tighten for prod)
 CORS_ALLOW_ALL_ORIGINS = True
 
-# Force CPU for inference
-DEFAULT_YOLO_DEVICE = os.getenv("DEFAULT_YOLO_DEVICE", "cpu")
+# Inference device: "auto" picks CUDA -> MPS -> CPU (see detection/detector.py:_resolve_device).
+# Override with the DEFAULT_YOLO_DEVICE env var if you need to force "cpu", "0", "0,1", etc.
+DEFAULT_YOLO_DEVICE = os.getenv("DEFAULT_YOLO_DEVICE", "auto")
 
 # Static (if you’ll serve the built React through Django later)
 STATIC_URL = "static/"

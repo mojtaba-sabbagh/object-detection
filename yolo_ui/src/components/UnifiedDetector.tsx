@@ -104,6 +104,52 @@ function downloadBase64Jpeg(base64: string, filename = 'annotated.jpg') {
   a.remove();
 }
 
+function downloadTextFile(text: string, filename = 'stats.txt') {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+const CLASS_LABELS: Record<string, string> = {
+  '0': 'Class 0',
+  '1': 'Class 1',
+  '2': 'Class 2',
+};
+
+/** Builds the same stats shown on screen as a plain-text report. */
+function buildStatsReport(params: {
+  imageName?: string;
+  image?: { width: number; height: number };
+  inference_ms?: number;
+  total?: number;
+  counts?: Record<string, number>;
+  modelName?: string | null;
+}): string {
+  const { imageName, image, inference_ms, total, counts, modelName } = params;
+  const lines: string[] = [];
+  lines.push('Detection Report');
+  lines.push('================');
+  if (imageName) lines.push(`Image: ${imageName}`);
+  lines.push(`Generated: ${new Date().toISOString()}`);
+  if (modelName) lines.push(`Model: ${modelName}`);
+  if (image) lines.push(`Dimensions: ${image.width} x ${image.height}`);
+  if (typeof inference_ms === 'number') lines.push(`Inference time: ${inference_ms} ms`);
+  lines.push('');
+  lines.push('Per-class counts:');
+  withAllClasses(counts).forEach(([k, v]) => {
+    lines.push(`  ${CLASS_LABELS[k] ?? `Class ${k}`}: ${v}`);
+  });
+  lines.push('');
+  lines.push(`Total: ${total ?? sumCounts(counts)}`);
+  return lines.join('\n');
+}
+
 function drawClientAnnotatedAndDownload(
   src: string,
   detections: Detection[] = [],
@@ -402,9 +448,12 @@ export default function UnifiedDetector(): JSX.Element {
                 <button
                   type="button"
                   onClick={() => {
-                    const fname = (files?.length === 1 && files.item(0)?.name)
-                      ? files.item(0)!.name.replace(/\.[^.]+$/, '') + '_annotated.jpg'
-                      : 'annotated.jpg';
+                    const baseName = (files?.length === 1 && files.item(0)?.name)
+                      ? files.item(0)!.name.replace(/\.[^.]+$/, '')
+                      : 'annotated';
+                    const fname = `${baseName}_annotated.jpg`;
+                    const statsFname = `${baseName}_stats.txt`;
+
                     if (singleResult.image_b64) {
                       downloadBase64Jpeg(singleResult.image_b64, fname);
                     } else {
@@ -416,11 +465,21 @@ export default function UnifiedDetector(): JSX.Element {
                         fname
                       );
                     }
+
+                    const report = buildStatsReport({
+                      imageName: files?.length === 1 ? files.item(0)?.name : undefined,
+                      image: singleResult.image,
+                      inference_ms: singleResult.inference_ms,
+                      total: singleResult.total,
+                      counts: singleResult.counts,
+                      modelName: currentModel?.name,
+                    });
+                    downloadTextFile(report, statsFname);
                   }}
                   className="text-xs text-slate-500 inline-flex items-center hover:text-slate-800"
-                  title="Download annotated image"
+                  title="Download annotated image and stats"
                 >
-                  ⬇️ Download annotated
+                  ⬇️ Download annotated + stats
                 </button>
             <div className="w-full flex justify-start">
               <div className="relative inline-block">
@@ -610,7 +669,10 @@ export default function UnifiedDetector(): JSX.Element {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  const fname = it.name.replace(/\.[^.]+$/, '') + '_annotated.jpg';
+                                  const baseName = it.name.replace(/\.[^.]+$/, '');
+                                  const fname = `${baseName}_annotated.jpg`;
+                                  const statsFname = `${baseName}_stats.txt`;
+
                                   if (it.image_b64) {
                                     downloadBase64Jpeg(it.image_b64, fname);
                                   } else {
@@ -620,11 +682,21 @@ export default function UnifiedDetector(): JSX.Element {
                                       : (previews.get(it.name) ?? '');
                                     drawClientAnnotatedAndDownload(afterSrc, it.detections ?? [], it.image, fname);
                                   }
+
+                                  const report = buildStatsReport({
+                                    imageName: it.name,
+                                    image: it.image,
+                                    inference_ms: it.inference_ms,
+                                    total: it.total,
+                                    counts: it.counts,
+                                    modelName: currentModel?.name,
+                                  });
+                                  downloadTextFile(report, statsFname);
                                 }}
                                 className="text-slate-500 inline-flex mb-1 items-center px-2.5 py-1 text-xs hover:text-slate-800"
-                                title="Download annotated image"
+                                title="Download annotated image and stats"
                               >
-                                ⬇️ Download Annotated Image
+                                ⬇️ Download Annotated + Stats
                               </button>
                             </div>
 
