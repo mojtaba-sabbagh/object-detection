@@ -21,22 +21,53 @@ COLORS = {
 _MODEL = None
 _MODEL_WEIGHTS = None
 
-def _load_model():
+def _resolve_weights_path() -> str:
     """
-    Lazy-load and cache a single YOLO model instance.
-    Uses settings.YOLO_MODEL_PATH (must point to your trained .pt).
+    Decide which weights file to load, in priority order:
+      1) The 'weights_path' of the active YoloModel row in the database
+         (YoloModel.objects.filter(is_active=True).first()).
+      2) settings.YOLO_MODEL_PATH, as a fallback if no active model is set
+         in the database (or the DB can't be queried yet, e.g. during
+         migrations).
     """
-    global _MODEL, _MODEL_WEIGHTS
-    if _MODEL is not None:
-        return _MODEL
+    try:
+        from .models import YoloModel
+        active = YoloModel.objects.filter(is_active=True).first()
+        if active and active.weights_path:
+            return active.weights_path
+    except Exception:
+        log.exception(
+            "Could not query the active YoloModel from the database; "
+            "falling back to settings.YOLO_MODEL_PATH."
+        )
 
     weights = getattr(settings, "YOLO_MODEL_PATH", None)
     if not weights:
-        # Give a precise error so the view can surface it when DEBUG=True
         raise RuntimeError(
-            "YOLO_MODEL_PATH is not configured in settings. "
-            "Set it to the path of your trained weights (e.g., '/path/to/best.pt')."
+            "No active model is set in the database (YoloModel.is_active) and "
+            "YOLO_MODEL_PATH is not configured in settings. Mark a model ACTIVE "
+            "in the admin, or set YOLO_MODEL_PATH as a fallback."
         )
+    return weights
+
+
+def _load_model():
+    """
+    Lazy-load and cache a YOLO model instance, keyed to whichever weights path
+    _resolve_weights_path() currently returns (the database's active model,
+    or settings.YOLO_MODEL_PATH as a fallback).
+
+    If the active model changes in the database (e.g. via the admin's
+    "Mark as ACTIVE" action), the next inference request will detect the
+    path change and reload the new weights automatically -- no server
+    restart required.
+    """
+    global _MODEL, _MODEL_WEIGHTS
+
+    weights = _resolve_weights_path()
+
+    if _MODEL is not None and _MODEL_WEIGHTS == weights:
+        return _MODEL
 
     try:
         from ultralytics import YOLO
@@ -44,7 +75,7 @@ def _load_model():
         _MODEL_WEIGHTS = weights
         log.info("Loaded YOLO weights: %s", weights)
         return _MODEL
-    except Exception as e:
+    except Exception:
         log.exception("Failed to load YOLO weights from %s", weights)
         raise
 
