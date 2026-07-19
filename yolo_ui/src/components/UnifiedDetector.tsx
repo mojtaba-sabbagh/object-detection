@@ -150,6 +150,84 @@ function buildStatsReport(params: {
   return lines.join('\n');
 }
 
+function csvEscape(value: string | number): string {
+  const s = String(value ?? '');
+  if (/[",\n]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function downloadCsvFile(rows: (string | number)[][], filename = 'detections.csv') {
+  const csv = rows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+  // Prepend a BOM so Excel opens UTF-8 (Farsi filenames, etc.) correctly.
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Builds a CSV: one row per image, plus per-class and grand totals at the end. */
+function buildBatchCsv(items: BatchItem[]): (string | number)[][] {
+  const header = [
+    'image_name',
+    'width',
+    'height',
+    'inference_ms',
+    ...ALL_CLASSES.map(k => `class_${k}_count`),
+    'total_objects',
+    'status',
+  ];
+
+  const rows: (string | number)[][] = [header];
+  const classTotals: Record<string, number> = Object.fromEntries(ALL_CLASSES.map(k => [k, 0]));
+  let grandTotal = 0;
+
+  for (const it of items) {
+    if (it.error) {
+      rows.push([
+        it.name,
+        '', '', '',
+        ...ALL_CLASSES.map(() => ''),
+        '',
+        `error: ${it.error}`,
+      ]);
+      continue;
+    }
+    const counts = withAllClasses(it.counts);
+    counts.forEach(([k, v]) => { classTotals[k] += v; });
+    const total = it.total ?? sumCounts(it.counts);
+    grandTotal += total;
+
+    rows.push([
+      it.name,
+      it.image?.width ?? '',
+      it.image?.height ?? '',
+      it.inference_ms ?? '',
+      ...counts.map(([, v]) => v),
+      total,
+      'ok',
+    ]);
+  }
+
+  // Blank separator row, then totals
+  rows.push(header.map(() => ''));
+  rows.push([
+    'TOTAL',
+    '', '', '',
+    ...ALL_CLASSES.map(k => classTotals[k]),
+    grandTotal,
+    '',
+  ]);
+
+  return rows;
+}
+
 function drawClientAnnotatedAndDownload(
   src: string,
   detections: Detection[] = [],
@@ -481,6 +559,25 @@ export default function UnifiedDetector(): JSX.Element {
                 >
                   ⬇️ Download annotated + stats
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const imageName = (files?.length === 1 && files.item(0)?.name) || 'image';
+                    const rows = buildBatchCsv([{
+                      name: imageName,
+                      image: singleResult.image,
+                      inference_ms: singleResult.inference_ms,
+                      counts: singleResult.counts,
+                      total: singleResult.total,
+                    }]);
+                    const baseName = imageName.replace(/\.[^.]+$/, '');
+                    downloadCsvFile(rows, `${baseName}_detections.csv`);
+                  }}
+                  className="ml-3 text-xs text-slate-500 inline-flex items-center hover:text-slate-800"
+                  title="Download a CSV with this image's counts and total"
+                >
+                  ⬇️ Download CSV
+                </button>
             <div className="w-full flex justify-start">
               <div className="relative inline-block">
                 <img
@@ -555,7 +652,21 @@ export default function UnifiedDetector(): JSX.Element {
 
       {batchResult && (
         <section className="space-y-6">
-            <h3 className="text-lg font-semibold">Batch results</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Batch results</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  const rows = buildBatchCsv(batchResult.items);
+                  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+                  downloadCsvFile(rows, `detections_${stamp}.csv`);
+                }}
+                className="px-3 py-1.5 rounded-lg border bg-white text-sm text-slate-700 hover:bg-slate-50"
+                title="Download one CSV row per image, with totals at the end"
+              >
+                ⬇️ Download CSV
+              </button>
+            </div>
 
             {/* Batch health */}
             <div>

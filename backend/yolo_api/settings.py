@@ -89,3 +89,23 @@ STATIC_ROOT = Path(BASE_DIR) / "staticfiles"
 
 # ...
 YOLO_MODEL_PATH = os.getenv('YOLO_MODEL_PATH', str(BASE_DIR / 'weights' / 'best.pt'))
+
+# Make sure our own INFO-level logs (device resolution, model loading, etc.)
+# actually show up in the console -- Django's default logging config only
+# surfaces its own request logs otherwise.
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'detection': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
