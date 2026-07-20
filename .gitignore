@@ -20,7 +20,7 @@ venv.bak/
 /media/
 /staticfiles/
 /static/
-
+dist/
 # Environment variables
 .env
 .env.local
