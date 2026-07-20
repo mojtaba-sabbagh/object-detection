@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from .detector import run_inference
 from .utils import merge_counts
 import io, zipfile, time
@@ -15,6 +16,9 @@ IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
 @method_decorator(csrf_exempt, name='dispatch')
 class CurrentModelView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
     def get(self, request):
         m = YoloModel.objects.filter(is_active=True).first()
         if not m:
@@ -52,6 +56,8 @@ class CurrentModelView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class BatchDetectView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
@@ -140,6 +146,8 @@ class BatchDetectView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class DetectView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, *args, **kwargs):
@@ -173,5 +181,8 @@ class DetectView(APIView):
 
 
 class HealthView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
     def get(self, request):
         return Response({'status': 'ok'})

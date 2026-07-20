@@ -20,7 +20,8 @@ venv.bak/
 /media/
 /staticfiles/
 /static/
-
+node_modules/
+weights/
 # Environment variables
 .env
 .env.local
@@ -62,7 +63,7 @@ yarn-error.log*
 
 # Build outputs
 /build/
-/dist/
+dist/
 /.next/
 /out/
 

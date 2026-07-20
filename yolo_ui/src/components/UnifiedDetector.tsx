@@ -185,7 +185,10 @@ function buildBatchCsv(items: BatchItem[]): (string | number)[][] {
   ];
 
   const rows: (string | number)[][] = [header];
-  const classTotals: Record<string, number> = Object.fromEntries(ALL_CLASSES.map(k => [k, 0]));
+  // Initialize totals for all classes to 0
+  const classTotals: Record<string, number> = Object.fromEntries(
+    ALL_CLASSES.map(k => [k, 0])
+  );
   let grandTotal = 0;
 
   for (const it of items) {
@@ -200,7 +203,10 @@ function buildBatchCsv(items: BatchItem[]): (string | number)[][] {
       continue;
     }
     const counts = withAllClasses(it.counts);
-    counts.forEach(([k, v]) => { classTotals[k] += v; });
+    // Accumulate safely – use (classTotals[k] || 0) to guarantee a number
+    counts.forEach(([k, v]) => {
+      classTotals[k] = (classTotals[k] || 0) + v;
+    });
     const total = it.total ?? sumCounts(it.counts);
     grandTotal += total;
 
@@ -220,14 +226,13 @@ function buildBatchCsv(items: BatchItem[]): (string | number)[][] {
   rows.push([
     'TOTAL',
     '', '', '',
-    ...ALL_CLASSES.map(k => classTotals[k]),
+    ...ALL_CLASSES.map(k => classTotals[k] ?? 0), // use ?? 0 to ensure number
     grandTotal,
     '',
   ]);
 
   return rows;
 }
-
 function drawClientAnnotatedAndDownload(
   src: string,
   detections: Detection[] = [],
