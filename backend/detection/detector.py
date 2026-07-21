@@ -205,6 +205,95 @@ def _draw_rects_bgr(img_bgr: np.ndarray, dets: List[Dict[str, Any]], thickness: 
         cv2.rectangle(img_bgr, (xi1, yi1), (xi2, yi2), color, thickness, lineType=cv2.LINE_AA)
     return img_bgr
 
+def _counts_from_dets(dets: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for d in dets:
+        counts[d["class_name"]] = counts.get(d["class_name"], 0) + 1
+    return counts
+
+def _draw_legend_bgr(
+    img_bgr: np.ndarray,
+    counts: Dict[str, int],
+    total: int,
+    colors: Dict[str, Tuple[int, int, int]] = COLORS,
+    margin: int = 12,
+    scale: float = 2.0,
+) -> np.ndarray:
+    """
+    Draws a small semi-transparent legend box in the bottom-left corner of
+    the image, showing per-class counts (color-matched to the bounding box
+    colors) and the grand total -- so the annotated image is self-contained.
+
+    `scale` multiplies the overall legend size (font, swatches, padding,
+    margin) -- 1.0 is the original size, 2.0 (the default) is twice as big.
+    """
+    h, w = img_bgr.shape[:2]
+    margin = int(round(margin * scale))
+
+    # Scale text/line sizing to the image's resolution (and the requested
+    # `scale`) so the legend stays readable on both small previews and
+    # large (tiled) images.
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.45, min(1.1, h / 1000.0)) * scale
+    thickness = max(1, int(round(font_scale * 2)))
+    line_height = int(28 * font_scale) + int(round(10 * scale))
+    swatch = int(16 * font_scale) + int(round(4 * scale))
+    pad = int(10 * font_scale) + int(round(6 * scale))
+
+    # Stable ordering: numeric class IDs first (sorted numerically), then
+    # any non-numeric class names alphabetically.
+    def _sort_key(k: str):
+        try:
+            return (0, int(k))
+        except ValueError:
+            return (1, k)
+
+    class_keys = sorted(counts.keys(), key=_sort_key)
+    lines = [f"Class {k}: {counts[k]}" for k in class_keys]
+    lines.append(f"Total: {total}")
+
+    text_sizes = [cv2.getTextSize(t, font, font_scale, thickness)[0] for t in lines]
+    text_w = max((sz[0] for sz in text_sizes), default=0)
+    box_w = text_w + swatch + pad * 3
+    box_h = line_height * len(lines) + pad * 2
+
+    x0 = margin
+    y0 = h - margin - box_h
+    x1 = x0 + box_w
+    y1 = h - margin
+
+    # Clip to image bounds (defensive, in case the legend would be taller
+    # than the image itself on a tiny thumbnail).
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w - 1, x1), min(h - 1, y1)
+
+    # Semi-transparent dark background so the legend stays readable over
+    # any part of the photo.
+    overlay = img_bgr.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), thickness=-1, lineType=cv2.LINE_AA)
+    cv2.addWeighted(overlay, 0.55, img_bgr, 0.45, 0, dst=img_bgr)
+    cv2.rectangle(img_bgr, (x0, y0), (x1, y1), (255, 255, 255), 1, lineType=cv2.LINE_AA)
+
+    ty = y0 + pad + line_height - int(6 * font_scale)
+    for i, k in enumerate(class_keys):
+        color = colors.get(k, (34, 197, 94))
+        sx0 = x0 + pad
+        sy0 = ty - swatch + int(4 * font_scale)
+        cv2.rectangle(img_bgr, (sx0, sy0), (sx0 + swatch, sy0 + swatch), color, thickness=-1, lineType=cv2.LINE_AA)
+        cv2.putText(
+            img_bgr, lines[i], (sx0 + swatch + pad, ty),
+            font, font_scale, (255, 255, 255), thickness, lineType=cv2.LINE_AA,
+        )
+        ty += line_height
+
+    # Total line, same style, drawn last (bottom of the box).
+    cv2.putText(
+        img_bgr, lines[-1], (x0 + pad, ty),
+        font, font_scale, (255, 255, 255), thickness, lineType=cv2.LINE_AA,
+    )
+
+    return img_bgr
+
 # ------------------ main API ------------------
 
 def run_inference(
@@ -279,6 +368,7 @@ def run_inference(
         if annotate:
             bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
             annotated = _draw_rects_bgr(bgr, dets)
+            annotated = _draw_legend_bgr(annotated, _counts_from_dets(dets), total=len(dets))
         t1 = time.time()
         return _package(dets, int((t1 - t0) * 1000), annotated)
 
@@ -308,6 +398,7 @@ def run_inference(
     if annotate:
         bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
         annotated = _draw_rects_bgr(bgr, merged)
+        annotated = _draw_legend_bgr(annotated, _counts_from_dets(merged), total=len(merged))
 
     t1 = time.time()
     return _package(merged, int((t1 - t0) * 1000), annotated)
