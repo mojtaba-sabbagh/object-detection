@@ -125,3 +125,10 @@ storybook-static/
 # Temporary folders
 tmp/
 temp/
+
+# Deploy scripts, tracked deliberately despite the *.bat rule above.
+!start-backend.bat
+!build-frontend.bat
+
+# tsc incremental build cache, rewritten by every build.
+*.tsbuildinfo
