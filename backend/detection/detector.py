@@ -1,7 +1,7 @@
 # detection/detector.py
 from __future__ import annotations
 from typing import List, Dict, Any, Tuple
-import time, base64, io, logging
+import time, base64, io, logging, os
 import numpy as np
 import cv2
 from PIL import Image, ImageOps
@@ -25,16 +25,28 @@ def _resolve_weights_path() -> str:
     """
     Decide which weights file to load, in priority order:
       1) The 'weights_path' of the active YoloModel row in the database
-         (YoloModel.objects.filter(is_active=True).first()).
+         (YoloModel.objects.filter(is_active=True).first()), if that file
+         actually exists on this machine.
       2) settings.YOLO_MODEL_PATH, as a fallback if no active model is set
-         in the database (or the DB can't be queried yet, e.g. during
-         migrations).
+         in the database, if the DB can't be queried yet (e.g. during
+         migrations), or if the active row's weights_path is missing here.
     """
     try:
         from .models import YoloModel
         active = YoloModel.objects.filter(is_active=True).first()
         if active and active.weights_path:
-            return active.weights_path
+            if os.path.exists(active.weights_path):
+                return active.weights_path
+            # The row travels with the database between checkouts, so it can
+            # hold an absolute path from another OS (a macOS '/Users/...' path
+            # seen from Windows, say). That is recoverable, not fatal: fall
+            # through to the settings default, which is derived from BASE_DIR.
+            log.warning(
+                "Active YoloModel %r has weights_path %r, which does not exist "
+                "on this machine; falling back to settings.YOLO_MODEL_PATH.",
+                getattr(active, "name", None) or active.pk,
+                active.weights_path,
+            )
     except Exception:
         log.exception(
             "Could not query the active YoloModel from the database; "

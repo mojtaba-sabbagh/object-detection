@@ -1,6 +1,7 @@
-# ----- CPU-only PyTorch wheels -----
-# This ensures pip can find the "+cpu" builds of torch/vision/audio.
-#--extra-index-url https://download.pytorch.org/whl/cpu
+# ----- PyTorch wheel index -----
+# Required: the "+cu124" builds below live only on PyTorch's own index, not on
+# PyPI, so pip cannot resolve them without this line. Keep it uncommented.
+--extra-index-url https://download.pytorch.org/whl/cu124
 
 # ----- Frameworks / server -----
 Django>=4.2,<5.0
@@ -15,8 +16,17 @@ opencv-python>=4.8,<5
 Pillow>=10,<11
 numpy>=1.26,<2.0
 
-# ----- PyTorch (CPU-only) -----
-# Pin to the CPU builds. The "+cpu" tag requires the extra index above.
-torch==2.4.1+cpu
-torchvision==0.19.1+cpu
-torchaudio==2.4.1+cpu
+# ----- PyTorch (CUDA 12.4) -----
+# GPU builds: detection runs on the GPU automatically, because
+# DEFAULT_YOLO_DEVICE defaults to "auto" and _resolve_device() picks CUDA
+# device 0 whenever torch.cuda.is_available().
+#
+# These wheels also install and run on a machine with no NVIDIA GPU -- torch
+# simply reports cuda.is_available() == False and the app falls back to CPU.
+# They are ~2.5 GB, so on a machine that will only ever use the CPU, swap the
+# index above to .../whl/cpu and these three pins to the +cpu variants.
+#
+# NOTE: requires Python <= 3.12. There are no torch 2.4.1 wheels for 3.13.
+torch==2.4.1+cu124
+torchvision==0.19.1+cu124
+torchaudio==2.4.1+cu124
