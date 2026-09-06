@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import axios from 'axios';
 import type { ApiResult, Detection } from '../types';
 import OverlayBoxes from './OverlayBoxes';
+import { buildVottAssetMetadata, vottAssetFileName } from '../lib/vott';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const ALL_CLASSES = ['0', '1', '2'] as const;
@@ -116,11 +117,67 @@ function downloadTextFile(text: string, filename = 'stats.txt') {
   URL.revokeObjectURL(url);
 }
 
+function downloadJsonFile(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 const CLASS_LABELS: Record<string, string> = {
   '0': 'Class 0',
   '1': 'Class 1',
   '2': 'Class 2',
 };
+
+const vottTagFor = (className: string) => CLASS_LABELS[className] ?? `Class ${className}`;
+
+/** Writes one VoTT 2.x `<assetId>-asset.json` next to the stats/CSV downloads. */
+function downloadVottAnnotations(params: {
+  imageName: string;
+  folderPath: string;
+  image?: { width: number; height: number };
+  detections?: Detection[];
+}) {
+  const { imageName, folderPath, image, detections } = params;
+  // Without the real pixel dimensions the regions would be meaningless.
+  if (!image) return;
+  const metadata = buildVottAssetMetadata({
+    imageName,
+    folderPath,
+    image,
+    detections: detections ?? [],
+    tagFor: vottTagFor,
+  });
+  downloadJsonFile(metadata, vottAssetFileName(metadata));
+}
+
+/**
+ * VoTT derives an asset's id by hashing the image's full path, so the export
+ * only lines up if we know the folder the images will sit in.
+ */
+function VottFolderField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="mt-2">
+      <label className="block text-[11px] text-slate-500">
+        VoTT image folder — the folder these images will be in when you open them in VoTT
+      </label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="C:\images\counting"
+        spellCheck={false}
+        className="mt-0.5 w-full max-w-lg rounded-lg border border-slate-300 px-2 py-1 text-xs font-mono"
+      />
+    </div>
+  );
+}
 
 /** Builds the same stats shown on screen as a plain-text report. */
 function buildStatsReport(params: {
@@ -299,6 +356,14 @@ export default function UnifiedDetector(): JSX.Element {
 
   // pagination for batch
   const [page, setPage] = useState(1);
+
+  // Remembered between runs so the folder only has to be typed once.
+  const [vottFolder, setVottFolder] = useState<string>(() => {
+    try { return localStorage.getItem('vottFolder') ?? ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('vottFolder', vottFolder); } catch { /* storage unavailable */ }
+  }, [vottFolder]);
   const pageSize = 10;
   const totalPages = useMemo(
     () => (batchResult ? Math.max(1, Math.ceil(batchResult.items.length / pageSize)) : 1),
@@ -583,6 +648,26 @@ export default function UnifiedDetector(): JSX.Element {
                 >
                   ⬇️ Download CSV
                 </button>
+                <button
+                  type="button"
+                  disabled={!vottFolder.trim()}
+                  onClick={() => {
+                    const imageName = (files?.length === 1 && files.item(0)?.name) || 'image.jpg';
+                    downloadVottAnnotations({
+                      imageName,
+                      folderPath: vottFolder.trim(),
+                      image: singleResult.image,
+                      detections: singleResult.detections,
+                    });
+                  }}
+                  className="ml-3 text-xs text-slate-500 inline-flex items-center hover:text-slate-800 disabled:opacity-40 disabled:hover:text-slate-500"
+                  title={vottFolder.trim()
+                    ? 'Download a VoTT 2.x annotation file for editing in VoTT'
+                    : 'Enter the VoTT image folder first'}
+                >
+                  ⬇️ Download VoTT
+                </button>
+                <VottFolderField value={vottFolder} onChange={setVottFolder} />
             <div className="w-full flex justify-start">
               <div className="relative inline-block">
                 <img
@@ -659,19 +744,45 @@ export default function UnifiedDetector(): JSX.Element {
         <section className="space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold">Batch results</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  const rows = buildBatchCsv(batchResult.items);
-                  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-                  downloadCsvFile(rows, `detections_${stamp}.csv`);
-                }}
-                className="px-3 py-1.5 rounded-lg border bg-white text-sm text-slate-700 hover:bg-slate-50"
-                title="Download one CSV row per image, with totals at the end"
-              >
-                ⬇️ Download CSV
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rows = buildBatchCsv(batchResult.items);
+                    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+                    downloadCsvFile(rows, `detections_${stamp}.csv`);
+                  }}
+                  className="px-3 py-1.5 rounded-lg border bg-white text-sm text-slate-700 hover:bg-slate-50"
+                  title="Download one CSV row per image, with totals at the end"
+                >
+                  ⬇️ Download CSV
+                </button>
+                <button
+                  type="button"
+                  disabled={!vottFolder.trim()}
+                  onClick={() => {
+                    const folderPath = vottFolder.trim();
+                    batchResult.items
+                      .filter((it) => !it.error && it.image)
+                      .forEach((it) => {
+                        downloadVottAnnotations({
+                          imageName: it.name,
+                          folderPath,
+                          image: it.image,
+                          detections: it.detections,
+                        });
+                      });
+                  }}
+                  className="px-3 py-1.5 rounded-lg border bg-white text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white"
+                  title={vottFolder.trim()
+                    ? 'Download one VoTT annotation file per image (the browser will ask to allow multiple downloads)'
+                    : 'Enter the VoTT image folder first'}
+                >
+                  ⬇️ Download all VoTT
+                </button>
+              </div>
             </div>
+            <VottFolderField value={vottFolder} onChange={setVottFolder} />
 
             {/* Batch health */}
             <div>
@@ -813,6 +924,24 @@ export default function UnifiedDetector(): JSX.Element {
                                 title="Download annotated image and stats"
                               >
                                 ⬇️ Download Annotated + Stats
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!vottFolder.trim()}
+                                onClick={() => {
+                                  downloadVottAnnotations({
+                                    imageName: it.name,
+                                    folderPath: vottFolder.trim(),
+                                    image: it.image,
+                                    detections: it.detections,
+                                  });
+                                }}
+                                className="text-slate-500 inline-flex mb-1 items-center px-2.5 py-1 text-xs hover:text-slate-800 disabled:opacity-40 disabled:hover:text-slate-500"
+                                title={vottFolder.trim()
+                                  ? 'Download a VoTT 2.x annotation file for editing in VoTT'
+                                  : 'Enter the VoTT image folder first'}
+                              >
+                                ⬇️ VoTT
                               </button>
                             </div>
 
