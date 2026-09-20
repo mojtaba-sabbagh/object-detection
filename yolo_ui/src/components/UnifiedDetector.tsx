@@ -17,6 +17,8 @@ type BatchItem = {
   detections?: Detection[];
   error?: string;
   image_b64?: string;
+  exif_orientation?: number;
+  upright_b64?: string;
 };
 type BatchResponse = {
   params: { conf: number; imgsz: number; device: string; images: number };
@@ -137,14 +139,23 @@ const CLASS_LABELS: Record<string, string> = {
 
 const vottTagFor = (className: string) => CLASS_LABELS[className] ?? `Class ${className}`;
 
-/** Writes one VoTT 2.x `<assetId>-asset.json` next to the stats/CSV downloads. */
+/**
+ * Writes one VoTT 2.x `<assetId>-asset.json` next to the stats/CSV downloads.
+ *
+ * When the upload carried an EXIF rotation the backend sends `uprightB64`, an
+ * upright copy of the original. The regions are in that upright frame, and VoTT
+ * 2.x ignores EXIF -- so the camera original would show sideways with the boxes
+ * off by 90 degrees. Download the upright copy under the original's name so it
+ * takes the original's place in the VoTT folder and the asset id still matches.
+ */
 function downloadVottAnnotations(params: {
   imageName: string;
   folderPath: string;
   image?: { width: number; height: number };
   detections?: Detection[];
+  uprightB64?: string;
 }) {
-  const { imageName, folderPath, image, detections } = params;
+  const { imageName, folderPath, image, detections, uprightB64 } = params;
   // Without the real pixel dimensions the regions would be meaningless.
   if (!image) return;
   const metadata = buildVottAssetMetadata({
@@ -155,13 +166,19 @@ function downloadVottAnnotations(params: {
     tagFor: vottTagFor,
   });
   downloadJsonFile(metadata, vottAssetFileName(metadata));
+  if (uprightB64) downloadBase64Jpeg(uprightB64, imageName);
 }
 
 /**
  * VoTT derives an asset's id by hashing the image's full path, so the export
  * only lines up if we know the folder the images will sit in.
  */
-function VottFolderField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function VottFolderField({ value, onChange, rotated }: {
+  value: string;
+  onChange: (v: string) => void;
+  /** True when at least one upload was stored rotated, so an upright copy ships with the JSON. */
+  rotated?: boolean;
+}) {
   return (
     <div className="mt-2">
       <label className="block text-[11px] text-slate-500">
@@ -175,6 +192,14 @@ function VottFolderField({ value, onChange }: { value: string; onChange: (v: str
         spellCheck={false}
         className="mt-0.5 w-full max-w-lg rounded-lg border border-slate-300 px-2 py-1 text-xs font-mono"
       />
+      {rotated && (
+        <p className="mt-1 max-w-lg text-[11px] text-amber-700">
+          This photo was saved rotated (EXIF), and VoTT ignores that — so an upright
+          copy of the image downloads with the annotation file. Put <em>both</em> in
+          the folder above, replacing the camera original, or the boxes will sit 90°
+          off the picture.
+        </p>
+      )}
     </div>
   );
 }
@@ -658,6 +683,7 @@ export default function UnifiedDetector(): JSX.Element {
                       folderPath: vottFolder.trim(),
                       image: singleResult.image,
                       detections: singleResult.detections,
+                      uprightB64: singleResult.upright_b64,
                     });
                   }}
                   className="ml-3 text-xs text-slate-500 inline-flex items-center hover:text-slate-800 disabled:opacity-40 disabled:hover:text-slate-500"
@@ -667,7 +693,11 @@ export default function UnifiedDetector(): JSX.Element {
                 >
                   ⬇️ Download VoTT
                 </button>
-                <VottFolderField value={vottFolder} onChange={setVottFolder} />
+                <VottFolderField
+                  value={vottFolder}
+                  onChange={setVottFolder}
+                  rotated={(singleResult.exif_orientation ?? 1) !== 1}
+                />
             <div className="w-full flex justify-start">
               <div className="relative inline-block">
                 <img
@@ -770,6 +800,7 @@ export default function UnifiedDetector(): JSX.Element {
                           folderPath,
                           image: it.image,
                           detections: it.detections,
+                          uprightB64: it.upright_b64,
                         });
                       });
                   }}
@@ -782,7 +813,11 @@ export default function UnifiedDetector(): JSX.Element {
                 </button>
               </div>
             </div>
-            <VottFolderField value={vottFolder} onChange={setVottFolder} />
+            <VottFolderField
+              value={vottFolder}
+              onChange={setVottFolder}
+              rotated={batchResult.items.some((it) => (it.exif_orientation ?? 1) !== 1)}
+            />
 
             {/* Batch health */}
             <div>
@@ -934,6 +969,7 @@ export default function UnifiedDetector(): JSX.Element {
                                     folderPath: vottFolder.trim(),
                                     image: it.image,
                                     detections: it.detections,
+                                    uprightB64: it.upright_b64,
                                   });
                                 }}
                                 className="text-slate-500 inline-flex mb-1 items-center px-2.5 py-1 text-xs hover:text-slate-800 disabled:opacity-40 disabled:hover:text-slate-500"

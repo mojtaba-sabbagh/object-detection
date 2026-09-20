@@ -162,7 +162,27 @@ def _nms_classwise(dets: List[Dict[str, Any]], iou_th: float = 0.5) -> List[Dict
 
 # ------------------ IO & model calls ------------------
 
-def _pil_from_file(file_obj) -> Image.Image:
+# EXIF tag holding the camera's orientation; 1 means "already upright".
+_EXIF_ORIENTATION_TAG = 0x0112
+
+
+def _exif_orientation(img: Image.Image) -> int:
+    """The image's EXIF orientation, or 1 when absent/unreadable."""
+    try:
+        return int(img.getexif().get(_EXIF_ORIENTATION_TAG, 1) or 1)
+    except Exception:
+        return 1
+
+
+def _pil_from_file(file_obj) -> Tuple[Image.Image, int]:
+    """
+    Returns the image in upright (display) orientation, together with the EXIF
+    orientation it was stored with.
+
+    Every coordinate we produce is in this upright frame, but the file still on
+    disk is not -- so callers need the orientation to tell whether an exported
+    annotation will line up with the original file (see `upright_b64`).
+    """
     if hasattr(file_obj, "read"):
         pos = file_obj.tell() if hasattr(file_obj, "tell") else None
         try:
@@ -179,11 +199,19 @@ def _pil_from_file(file_obj) -> Image.Image:
         data = file_obj
 
     img = Image.open(io.BytesIO(data))
+    orientation = _exif_orientation(img)
     try:
         img = ImageOps.exif_transpose(img)
     except Exception:
-        pass
-    return img.convert("RGB")
+        orientation = 1
+    return img.convert("RGB"), orientation
+
+
+def _jpeg_b64_from_pil(pil_img: Image.Image, quality: int = 92) -> str:
+    """Encodes an upright PIL image as base64 JPEG, with no EXIF attached."""
+    buf = io.BytesIO()
+    pil_img.save(buf, format="JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 def _predict_on_pil(model, pil_img: Image.Image, conf: float, imgsz: int, device: str):
     # Ultralytics accepts PIL directly
@@ -329,7 +357,7 @@ def run_inference(
     log.info("run_inference: requested device=%r resolved device=%r", device, dev)
 
     # Read image
-    pil = _pil_from_file(file_obj)
+    pil, exif_orientation = _pil_from_file(file_obj)
     W, H = pil.size
 
     def _package(dets: List[Dict[str, Any]], t_ms: int, annotated_bgr: np.ndarray | None):
@@ -354,7 +382,15 @@ def run_inference(
             "detections": out_dets,
             "counts": counts,
             "total": sum(counts.values()),
+            "exif_orientation": exif_orientation,
         }
+
+        # The boxes above are in the upright frame, but the uploaded file is
+        # still stored rotated. Tools that ignore EXIF -- VoTT 2.x among them --
+        # would draw those boxes over sideways pixels, so hand back an upright
+        # copy of the original to use in their place.
+        if exif_orientation not in (0, 1):
+            payload["upright_b64"] = _jpeg_b64_from_pil(pil)
 
         if annotate and annotated_bgr is not None:
             ok, buf = cv2.imencode(".jpg", annotated_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])

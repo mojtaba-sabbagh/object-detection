@@ -15,4 +15,8 @@ export interface ApiResult {
   counts: Record<string, number>;
   total: number;
   image_b64?: string; // optional if backend returns annotated image
+  /** EXIF orientation the uploaded file was stored with; 1 means already upright. */
+  exif_orientation?: number;
+  /** Upright, un-annotated copy of the original; only sent when it was rotated. */
+  upright_b64?: string;
 }

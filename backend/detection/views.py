@@ -128,6 +128,8 @@ class BatchDetectView(APIView):
                     "total": res.get("total"),
                     "detections": res.get("detections"),
                     "image_b64": res.get("image_b64"),
+                    "exif_orientation": res.get("exif_orientation"),
+                    "upright_b64": res.get("upright_b64"),
                 })
             except Exception as e:
                 items.append({"name": name, "error": str(e)})
