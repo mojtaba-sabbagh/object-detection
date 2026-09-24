@@ -37,10 +37,6 @@ def _resolve_weights_path() -> str:
         if active and active.weights_path:
             if os.path.exists(active.weights_path):
                 return active.weights_path
-            # The row travels with the database between checkouts, so it can
-            # hold an absolute path from another OS (a macOS '/Users/...' path
-            # seen from Windows, say). That is recoverable, not fatal: fall
-            # through to the settings default, which is derived from BASE_DIR.
             log.warning(
                 "Active YoloModel %r has weights_path %r, which does not exist "
                 "on this machine; falling back to settings.YOLO_MODEL_PATH.",
@@ -91,6 +87,7 @@ def _load_model():
         log.exception("Failed to load YOLO weights from %s", weights)
         raise
 
+
 def _resolve_device(device: str | None) -> str:
     """
     device in {'auto','cpu','mps','0','0,1',...}
@@ -100,14 +97,13 @@ def _resolve_device(device: str | None) -> str:
     if dev == "cpu":
         return "cpu"
     if dev in ("mps", "metal"):
-        return "mps"  # Apple GPU if your torch was built with MPS
+        return "mps"
 
     try:
         import torch
         if dev == "auto":
             if torch.cuda.is_available():
                 return "0"
-            # Prefer MPS on Apple if available
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 return "mps"
             log.info(
@@ -116,7 +112,6 @@ def _resolve_device(device: str | None) -> str:
                 hasattr(torch.backends, "mps") and torch.backends.mps.is_available(),
             )
             return "cpu"
-        # For explicit strings like "0" or "0,1"
         if dev == "0" or dev.replace(",", "").isdigit():
             if torch.cuda.is_available():
                 return dev
@@ -142,6 +137,7 @@ def _iou_xyxy(a: Tuple[float,float,float,float], b: Tuple[float,float,float,floa
     area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
     denom = area_a + area_b - inter
     return inter / denom if denom > 0 else 0.0
+
 
 def _nms_classwise(dets: List[Dict[str, Any]], iou_th: float = 0.5) -> List[Dict[str, Any]]:
     """NMS per class on global boxes (expects det['bbox'] as x1,y1,x2,y2)."""
@@ -182,6 +178,17 @@ def _pil_from_file(file_obj) -> Tuple[Image.Image, int]:
     Every coordinate we produce is in this upright frame, but the file still on
     disk is not -- so callers need the orientation to tell whether an exported
     annotation will line up with the original file (see `upright_b64`).
+
+    Rotation is applied explicitly (rather than via ImageOps.exif_transpose)
+    so the direction is unambiguous:
+
+        EXIF 1 -> no rotation (already upright)
+        EXIF 3 -> 180 degrees
+        EXIF 6 -> 90 degrees CW   (PIL: rotate(-90))
+        EXIF 8 -> 90 degrees CCW  (PIL: rotate(+90))
+
+    PIL's Image.rotate(angle) rotates counter-clockwise by `angle`, so a
+    negative angle rotates clockwise.
     """
     if hasattr(file_obj, "read"):
         pos = file_obj.tell() if hasattr(file_obj, "tell") else None
@@ -200,23 +207,43 @@ def _pil_from_file(file_obj) -> Tuple[Image.Image, int]:
 
     img = Image.open(io.BytesIO(data))
     orientation = _exif_orientation(img)
-    try:
-        img = ImageOps.exif_transpose(img)
-    except Exception:
-        orientation = 1
+
+    if orientation == 3:
+        img = img.rotate(180, expand=True)
+    elif orientation == 6:
+        img = img.rotate(-90, expand=True)   # 90 degrees clockwise
+    elif orientation == 8:
+        img = img.rotate(90, expand=True)    # 90 degrees counter-clockwise
+    # orientation == 1 (and anything unexpected): leave as-is.
+
     return img.convert("RGB"), orientation
 
 
 def _jpeg_b64_from_pil(pil_img: Image.Image, quality: int = 92) -> str:
-    """Encodes an upright PIL image as base64 JPEG, with no EXIF attached."""
+    """
+    Encodes an already-upright PIL image as a base64 JPEG with NO metadata.
+
+    This matters: the source file often carries an EXIF orientation tag (e.g.
+    6, "rotate 90 CW to display upright"). The pixels we hand out are already
+    upright, so if that tag were copied into the output JPEG, any viewer that
+    honors EXIF -- VoTT 2.x's Chromium image loader among them -- would apply
+    the rotation a second time and the annotation would land 90/180 degrees
+    off. Copy through a fresh Image (no .info, no .getexif()) so the saved
+    bytes are guaranteed metadata-free.
+    """
+    clean = Image.new("RGB", pil_img.size)
+    clean.paste(pil_img)
+
     buf = io.BytesIO()
-    pil_img.save(buf, format="JPEG", quality=quality)
+    clean.save(buf, format="JPEG", quality=quality)
     return base64.b64encode(buf.getvalue()).decode("ascii")
+
 
 def _predict_on_pil(model, pil_img: Image.Image, conf: float, imgsz: int, device: str):
     # Ultralytics accepts PIL directly
     results = model.predict(source=pil_img, conf=conf, imgsz=imgsz, device=device, verbose=False)
     return results[0]
+
 
 def _boxes_from_result(r) -> List[Dict[str, Any]]:
     boxes = getattr(r, "boxes", None)
@@ -235,6 +262,7 @@ def _boxes_from_result(r) -> List[Dict[str, Any]]:
         })
     return dets
 
+
 def _draw_rects_bgr(img_bgr: np.ndarray, dets: List[Dict[str, Any]], thickness: int = 2) -> np.ndarray:
     h, w = img_bgr.shape[:2]
     for d in dets:
@@ -245,11 +273,13 @@ def _draw_rects_bgr(img_bgr: np.ndarray, dets: List[Dict[str, Any]], thickness: 
         cv2.rectangle(img_bgr, (xi1, yi1), (xi2, yi2), color, thickness, lineType=cv2.LINE_AA)
     return img_bgr
 
+
 def _counts_from_dets(dets: List[Dict[str, Any]]) -> Dict[str, int]:
     counts: Dict[str, int] = {}
     for d in dets:
         counts[d["class_name"]] = counts.get(d["class_name"], 0) + 1
     return counts
+
 
 def _draw_legend_bgr(
     img_bgr: np.ndarray,
@@ -270,9 +300,6 @@ def _draw_legend_bgr(
     h, w = img_bgr.shape[:2]
     margin = int(round(margin * scale))
 
-    # Scale text/line sizing to the image's resolution (and the requested
-    # `scale`) so the legend stays readable on both small previews and
-    # large (tiled) images.
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = max(0.45, min(1.1, h / 1000.0)) * scale
     thickness = max(1, int(round(font_scale * 2)))
@@ -280,8 +307,6 @@ def _draw_legend_bgr(
     swatch = int(16 * font_scale) + int(round(4 * scale))
     pad = int(10 * font_scale) + int(round(6 * scale))
 
-    # Stable ordering: numeric class IDs first (sorted numerically), then
-    # any non-numeric class names alphabetically.
     def _sort_key(k: str):
         try:
             return (0, int(k))
@@ -302,13 +327,9 @@ def _draw_legend_bgr(
     x1 = x0 + box_w
     y1 = h - margin
 
-    # Clip to image bounds (defensive, in case the legend would be taller
-    # than the image itself on a tiny thumbnail).
     x0, y0 = max(0, x0), max(0, y0)
     x1, y1 = min(w - 1, x1), min(h - 1, y1)
 
-    # Semi-transparent dark background so the legend stays readable over
-    # any part of the photo.
     overlay = img_bgr.copy()
     cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 0, 0), thickness=-1, lineType=cv2.LINE_AA)
     cv2.addWeighted(overlay, 0.55, img_bgr, 0.45, 0, dst=img_bgr)
@@ -326,7 +347,6 @@ def _draw_legend_bgr(
         )
         ty += line_height
 
-    # Total line, same style, drawn last (bottom of the box).
     cv2.putText(
         img_bgr, lines[-1], (x0 + pad, ty),
         font, font_scale, (255, 255, 255), thickness, lineType=cv2.LINE_AA,
@@ -342,26 +362,23 @@ def run_inference(
     imgsz: int = 640,
     device: str | None = None,
     annotate: bool = False,
-    tile: str | int | bool = "auto",   # "auto"|1|0
+    tile: str | int | bool = "auto",
     tile_size: int = 640,
-    overlap: float = 0.20,             # 20% overlap
+    overlap: float = 0.20,
     nms_iou: float = 0.50,
 ) -> Dict[str, Any]:
     """
     Tiled inference for large images. Returns:
       image: {width,height}, detections, counts, total, inference_ms, image_b64 (if annotate)
     """
-    # Load model & device
     model = _load_model()
     dev = _resolve_device(device)
     log.info("run_inference: requested device=%r resolved device=%r", device, dev)
 
-    # Read image
     pil, exif_orientation = _pil_from_file(file_obj)
     W, H = pil.size
 
     def _package(dets: List[Dict[str, Any]], t_ms: int, annotated_bgr: np.ndarray | None):
-        # build counts + width/height + expand bbox dict format
         counts: Dict[str, int] = {}
         out_dets: List[Dict[str, Any]] = []
         for d in dets:
@@ -389,8 +406,18 @@ def run_inference(
         # still stored rotated. Tools that ignore EXIF -- VoTT 2.x among them --
         # would draw those boxes over sideways pixels, so hand back an upright
         # copy of the original to use in their place.
+        #
+        # NOTE: the pixel data in `pil` is already upright (we rotated it in
+        # `_pil_from_file`). `_jpeg_b64_from_pil` guarantees the returned JPEG
+        # has NO EXIF orientation tag, so no viewer will rotate it a second
+        # time.
         if exif_orientation not in (0, 1):
             payload["upright_b64"] = _jpeg_b64_from_pil(pil)
+            log.info(
+                "upright_b64 generated for EXIF orientation %s; pixels are "
+                "upright and the encoded JPEG carries no EXIF.",
+                exif_orientation,
+            )
 
         if annotate and annotated_bgr is not None:
             ok, buf = cv2.imencode(".jpg", annotated_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
@@ -408,7 +435,6 @@ def run_inference(
     t0 = time.time()
 
     if not tile_flag:
-        # ----- Simple single-pass inference -----
         r = _predict_on_pil(model, pil, conf=conf, imgsz=imgsz, device=dev)
         dets = _boxes_from_result(r)
         dets = _nms_classwise(dets, iou_th=nms_iou)
@@ -420,7 +446,6 @@ def run_inference(
         t1 = time.time()
         return _package(dets, int((t1 - t0) * 1000), annotated)
 
-    # ----- Tiled inference -----
     step = max(1, int(tile_size * (1.0 - overlap)))
     all_dets: List[Dict[str, Any]] = []
 
@@ -430,16 +455,14 @@ def run_inference(
             bottom = min(top + tile_size, H)
             if right <= left or bottom <= top:
                 continue
-            crop = pil.crop((left, top, right, bottom))  # RGB crop
+            crop = pil.crop((left, top, right, bottom))
             r = _predict_on_pil(model, crop, conf=conf, imgsz=imgsz, device=dev)
             dets = _boxes_from_result(r)
-            # translate to global coords
             for d in dets:
                 x1, y1, x2, y2 = d["bbox"]
                 d["bbox"] = (x1 + left, y1 + top, x2 + left, y2 + top)
                 all_dets.append(d)
 
-    # NMS across all tiles (class-wise)
     merged = _nms_classwise(all_dets, iou_th=nms_iou)
 
     annotated = None
