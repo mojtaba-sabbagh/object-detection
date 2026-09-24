@@ -132,9 +132,9 @@ function downloadJsonFile(data: unknown, filename: string) {
 }
 
 const CLASS_LABELS: Record<string, string> = {
-  '0': 'Class 0',
-  '1': 'Class 1',
-  '2': 'Class 2',
+  '0': 'Class_0',
+  '1': 'Class_1',
+  '2': 'Class_2',
 };
 
 const vottTagFor = (className: string) => CLASS_LABELS[className] ?? `Class ${className}`;
